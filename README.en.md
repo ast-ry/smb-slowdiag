@@ -2,7 +2,7 @@
 
 Troubleshooting script for SMB latency issues based on `tshark`.
 
-Japanese README: `README.md`
+Japanese README: `README.ja.md`
 
 ## Features
 
