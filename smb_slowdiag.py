@@ -747,7 +747,37 @@ def write_markdown_summary(
     out_path: str,
 ) -> None:
     ja = cfg.lang == "ja"
+    actions = build_recommended_actions(
+        lang=cfg.lang,
+        total_frames=total_frames,
+        retrans_count=retrans_count,
+        dup_ack_count=dup_ack_count,
+        zero_window_count=zero_window_count,
+        window_full_count=window_full_count,
+        smb_latency=smb_latency,
+        rtt_overall=rtt_overall,
+        status_counts=status_counts,
+        credit_pressure_count=credit_pressure_count,
+        outstanding_peak=outstanding_peak,
+    )
+    triggered_actions = [
+        a for a in actions if a.get("status") in (("要対応",) if ja else ("Triggered",))
+    ]
     findings = []
+    if triggered_actions:
+        findings.append(
+            (
+                "閾値超過の項目があります（"
+                + ", ".join(a["id"] for a in triggered_actions)
+                + "）。「推奨される次アクション」の要対応項目を優先してください。"
+            )
+            if ja
+            else (
+                "Some thresholds were exceeded ("
+                + ", ".join(a["id"] for a in triggered_actions)
+                + "). Prioritize the Triggered items in Recommended Next Actions."
+            )
+        )
     if retrans_count > 0 or dup_ack_count > 0:
         findings.append(
             "TCP再送/重複ACKが観測されました。ネットワーク品質または経路混雑の影響を疑ってください。"
@@ -785,19 +815,6 @@ def write_markdown_summary(
         if s["count"] > 0:
             top_cmd.append((cmd, s))
     top_cmd.sort(key=lambda x: x[1]["p95_ms"], reverse=True)
-    actions = build_recommended_actions(
-        lang=cfg.lang,
-        total_frames=total_frames,
-        retrans_count=retrans_count,
-        dup_ack_count=dup_ack_count,
-        zero_window_count=zero_window_count,
-        window_full_count=window_full_count,
-        smb_latency=smb_latency,
-        rtt_overall=rtt_overall,
-        status_counts=status_counts,
-        credit_pressure_count=credit_pressure_count,
-        outstanding_peak=outstanding_peak,
-    )
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("# SMB SlowDiag Summary\n\n" if not ja else "# SMB SlowDiag レポート\n\n")
