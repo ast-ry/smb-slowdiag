@@ -1,0 +1,4 @@
+# session_id,session_key,server2client,client2server
+# session_id は 16桁hex(8 bytes)。session_key は hex。
+# 以下は Wireshark/Samba 公開例に合わせたフォーマット例。
+3d00009400480000,28f2847263c83dc00621f742dd3f2e7b,,
