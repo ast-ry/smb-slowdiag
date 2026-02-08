@@ -263,8 +263,18 @@ def summarize_latency(ms_values: list[float]) -> dict[str, float]:
     if not ms_values:
         return {"count": 0, "avg_ms": 0.0, "p50_ms": 0.0, "p95_ms": 0.0, "max_ms": 0.0}
     sorted_vals = sorted(ms_values)
-    p50 = sorted_vals[int(0.50 * (len(sorted_vals) - 1))]
-    p95 = sorted_vals[int(0.95 * (len(sorted_vals) - 1))]
+
+    def percentile(p: float) -> float:
+        if len(sorted_vals) == 1:
+            return sorted_vals[0]
+        pos = (len(sorted_vals) - 1) * p
+        lo = int(pos)
+        hi = min(lo + 1, len(sorted_vals) - 1)
+        frac = pos - lo
+        return sorted_vals[lo] * (1.0 - frac) + sorted_vals[hi] * frac
+
+    p50 = percentile(0.50)
+    p95 = percentile(0.95)
     return {
         "count": len(ms_values),
         "avg_ms": statistics.fmean(ms_values),
@@ -346,7 +356,7 @@ def build_recommended_actions(
     rtt_p95 = rtt_overall.get("p95_ms", 0.0)
 
     ja = lang == "ja"
-    t1 = retrans_count > 0 or dup_ack_count > 0
+    t1 = retrans_count >= 3 or retrans_pct >= 0.10 or dup_ack_count >= 10 or dupack_pct >= 0.20
     actions.append(
         {
             "id": "1",
@@ -360,7 +370,7 @@ def build_recommended_actions(
             "trigger": (
                 f"retrans={retrans_count} ({retrans_pct:.2f}%), dup_ack={dup_ack_count} ({dupack_pct:.2f}%)"
             ),
-            "criteria": "retrans_count > 0 OR dup_ack_count > 0",
+            "criteria": "retrans_count >= 3 OR retrans_pct >= 0.10% OR dup_ack_count >= 10 OR dup_ack_pct >= 0.20%",
             "next": (
                 "Collect same-time captures at both endpoints; validate NIC errors/drops; "
                 "check MTU mismatch and path quality with iperf/ping."
@@ -374,7 +384,7 @@ def build_recommended_actions(
         }
     )
 
-    t2 = zero_window_count > 0 or window_full_count > 0
+    t2 = zero_window_count >= 3 or zero_pct >= 0.05 or window_full_count >= 10 or winfull_pct >= 0.20
     actions.append(
         {
             "id": "2",
@@ -388,7 +398,7 @@ def build_recommended_actions(
             "trigger": (
                 f"zero_window={zero_window_count} ({zero_pct:.2f}%), window_full={window_full_count} ({winfull_pct:.2f}%)"
             ),
-            "criteria": "zero_window_count > 0 OR window_full_count > 0",
+            "criteria": "zero_window_count >= 3 OR zero_window_pct >= 0.05% OR window_full_count >= 10 OR window_full_pct >= 0.20%",
             "next": (
                 "Check endpoint CPU/memory pressure and socket buffers; review application throughput limits; "
                 "verify if a single flow is saturating receive processing."
@@ -402,7 +412,11 @@ def build_recommended_actions(
         }
     )
 
-    t3 = smb_p95 >= 50.0 and (rtt_overall.get("count", 0) == 0 or rtt_p95 <= 10.0) and retrans_count == 0
+    t3 = (
+        smb_p95 >= 100.0
+        and (rtt_overall.get("count", 0) == 0 or rtt_p95 <= 20.0)
+        and retrans_count < 3
+    )
     actions.append(
         {
             "id": "3",
@@ -414,7 +428,7 @@ def build_recommended_actions(
             if not ja
             else "サーバー/ストレージ側の処理遅延",
             "trigger": f"smb_p95={smb_p95:.3f}ms, rtt_p95={rtt_p95:.3f}ms, retrans={retrans_count}",
-            "criteria": "smb_p95_ms >= 50 AND retrans_count == 0 AND (rtt_p95_ms <= 10 OR no_rtt_samples)",
+            "criteria": "smb_p95_ms >= 100 AND retrans_count < 3 AND (rtt_p95_ms <= 20 OR no_rtt_samples)",
             "next": (
                 "Correlate with server disk latency, AV scanning, and file-lock contention; "
                 "check server event logs and storage queue depth in the same time window."
@@ -435,7 +449,7 @@ def build_recommended_actions(
         + status_counts.get("0xc0000034", 0)
     )
     auth_acl_pct = (auth_acl_hits / max(1, total_status)) * 100.0
-    t4 = auth_acl_hits > 0
+    t4 = auth_acl_hits >= 3 or auth_acl_pct >= 5.0
     actions.append(
         {
             "id": "4",
@@ -447,7 +461,7 @@ def build_recommended_actions(
             if not ja
             else "認証/認可/パス関連エラー",
             "trigger": f"auth_acl_related={auth_acl_hits}/{total_status} ({auth_acl_pct:.1f}%)",
-            "criteria": "count(0xc000006d,0xc0000022,0xc0000034) > 0",
+            "criteria": "count(0xc000006d,0xc0000022,0xc0000034) >= 3 OR ratio >= 5%",
             "next": (
                 "Validate credentials, SPN/Kerberos/NTLM fallback, and share/file ACLs; "
                 "cross-check server security logs for matching timestamps."
@@ -461,7 +475,7 @@ def build_recommended_actions(
         }
     )
 
-    t5 = credit_pressure_count > 0
+    t5 = credit_pressure_count >= 5
     actions.append(
         {
             "id": "5",
@@ -473,7 +487,7 @@ def build_recommended_actions(
             if not ja
             else "SMBクレジット/並列性ボトルネック",
             "trigger": f"credit_pressure_events={credit_pressure_count}, outstanding_peak={outstanding_peak}",
-            "criteria": "credit_pressure_count > 0 (credits.requested > credits.granted)",
+            "criteria": "credit_pressure_count >= 5 (credits.requested > credits.granted)",
             "next": (
                 "Increase parallel I/O depth and verify client/server credit behavior; "
                 "review workload pattern if large transfer is serialized by low outstanding requests."
@@ -487,6 +501,150 @@ def build_recommended_actions(
         }
     )
     return actions
+
+
+def analyze_connection_setup(
+    rows_sorted: list[dict[str, str]]
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    by_session: dict[str, dict[str, object]] = defaultdict(
+        lambda: {
+            "first_negotiate_req_ts": None,
+            "first_session_setup_rsp_ts": None,
+            "first_tree_connect_rsp_ts": None,
+            "negotiate_rsp_ms": [],
+            "session_setup_rsp_ms": [],
+            "tree_connect_rsp_ms": [],
+            "session_setup_non_success": 0,
+            "session_setup_more_processing": 0,
+            "session_setup_success": 0,
+            "auth_failure_like": 0,
+        }
+    )
+    by_stream: dict[str, dict[str, float | None]] = defaultdict(
+        lambda: {"first_negotiate_req_ts": None, "first_setup_rsp_ts": None}
+    )
+
+    for r in rows_sorted:
+        sesid = r.get("smb2.sesid", "")
+        stream = r.get("tcp.stream", "")
+        if not sesid:
+            # keep collecting stream-level setup timing for fallback
+            cmd = r.get("smb2.cmd", "")
+            is_response = to_bool(r.get("smb2.flags.response", "0"))
+            ts = to_float(r.get("frame.time_epoch", "0"))
+            if stream:
+                st = by_stream[stream]
+                if cmd == "0" and not is_response and st["first_negotiate_req_ts"] is None:
+                    st["first_negotiate_req_ts"] = ts
+                if cmd in {"1", "3"} and is_response and st["first_setup_rsp_ts"] is None:
+                    st["first_setup_rsp_ts"] = ts
+            continue
+        cmd = r.get("smb2.cmd", "")
+        is_response = to_bool(r.get("smb2.flags.response", "0"))
+        ts = to_float(r.get("frame.time_epoch", "0"))
+        t_ms = to_float(r.get("smb2.time", "0")) * 1000.0
+        nt = (r.get("smb2.nt_status", "") or "").lower()
+        sess = by_session[sesid]
+        if stream:
+            st = by_stream[stream]
+            if cmd == "0" and not is_response and st["first_negotiate_req_ts"] is None:
+                st["first_negotiate_req_ts"] = ts
+            if cmd in {"1", "3"} and is_response and st["first_setup_rsp_ts"] is None:
+                st["first_setup_rsp_ts"] = ts
+
+        if cmd == "0" and not is_response and sess["first_negotiate_req_ts"] is None:
+            sess["first_negotiate_req_ts"] = ts
+        if cmd == "0" and is_response and t_ms > 0:
+            sess["negotiate_rsp_ms"].append(t_ms)
+        if cmd == "1" and is_response:
+            if sess["first_session_setup_rsp_ts"] is None:
+                sess["first_session_setup_rsp_ts"] = ts
+            if t_ms > 0:
+                sess["session_setup_rsp_ms"].append(t_ms)
+            if nt == "0x00000000":
+                sess["session_setup_success"] += 1
+            elif nt == "0xc0000016":
+                sess["session_setup_more_processing"] += 1
+            else:
+                sess["session_setup_non_success"] += 1
+                if nt in {"0xc000006d", "0xc0000022", "0xc0000034"}:
+                    sess["auth_failure_like"] += 1
+        if cmd == "3" and is_response:
+            if sess["first_tree_connect_rsp_ts"] is None:
+                sess["first_tree_connect_rsp_ts"] = ts
+            if t_ms > 0:
+                sess["tree_connect_rsp_ms"].append(t_ms)
+
+    rows = []
+    setup_windows = []
+    setup_rsp_all = []
+    setup_rsp_fail = 0
+    setup_rsp_success = 0
+    auth_fail_like = 0
+    sessions_with_setup = 0
+    for sesid in sorted(by_session.keys()):
+        s = by_session[sesid]
+        n = summarize_latency(s["negotiate_rsp_ms"])
+        ss = summarize_latency(s["session_setup_rsp_ms"])
+        tc = summarize_latency(s["tree_connect_rsp_ms"])
+        start = s["first_negotiate_req_ts"]
+        end = s["first_tree_connect_rsp_ts"] or s["first_session_setup_rsp_ts"]
+        setup_ms = 0.0
+        if start and end and end >= start:
+            setup_ms = (end - start) * 1000.0
+            setup_windows.append(setup_ms)
+        if ss["count"] > 0:
+            sessions_with_setup += 1
+            setup_rsp_all.extend(s["session_setup_rsp_ms"])
+        setup_rsp_fail += int(s["session_setup_non_success"])
+        setup_rsp_success += int(s["session_setup_success"])
+        auth_fail_like += int(s["auth_failure_like"])
+        rows.append(
+            {
+                "smb_session_id": sesid,
+                "setup_window_ms": f"{setup_ms:.3f}" if setup_ms > 0 else "",
+                "negotiate_rsp_count": int(n["count"]),
+                "negotiate_p95_ms": f"{n['p95_ms']:.3f}",
+                "session_setup_rsp_count": int(ss["count"]),
+                "session_setup_p95_ms": f"{ss['p95_ms']:.3f}",
+                "session_setup_success": int(s["session_setup_success"]),
+                "session_setup_non_success": int(s["session_setup_non_success"]),
+                "session_setup_more_processing": int(s["session_setup_more_processing"]),
+                "auth_failure_like": int(s["auth_failure_like"]),
+                "tree_connect_rsp_count": int(tc["count"]),
+                "tree_connect_p95_ms": f"{tc['p95_ms']:.3f}",
+            }
+        )
+
+    stream_setup_windows = []
+    for st in by_stream.values():
+        start = st["first_negotiate_req_ts"]
+        end = st["first_setup_rsp_ts"]
+        if start and end and end >= start:
+            stream_setup_windows.append((end - start) * 1000.0)
+
+    setup_window_source = "session"
+    selected_setup_windows = setup_windows
+    if not selected_setup_windows and stream_setup_windows:
+        setup_window_source = "stream_fallback"
+        selected_setup_windows = stream_setup_windows
+
+    setup_window_stats = summarize_latency(selected_setup_windows)
+    setup_rsp_stats = summarize_latency(setup_rsp_all)
+    summary = {
+        "sessions_with_setup": sessions_with_setup,
+        "setup_window_p95_ms": setup_window_stats["p95_ms"],
+        "setup_window_avg_ms": setup_window_stats["avg_ms"],
+        "setup_window_count": int(setup_window_stats["count"]),
+        "setup_window_source": setup_window_source,
+        "session_setup_rsp_count": int(setup_rsp_stats["count"]),
+        "session_setup_p95_ms": setup_rsp_stats["p95_ms"],
+        "session_setup_avg_ms": setup_rsp_stats["avg_ms"],
+        "session_setup_non_success": setup_rsp_fail,
+        "session_setup_success": setup_rsp_success,
+        "auth_failure_like": auth_fail_like,
+    }
+    return rows, summary
 
 
 def detect_mode(cfg: Config) -> tuple[str, list[str], list[tuple[str, str, str, str]]]:
@@ -585,6 +743,7 @@ def write_markdown_summary(
     rtt_overall: dict[str, float],
     rtt_by_direction: dict[str, dict[str, float]],
     multichannel_sessions: list[dict[str, object]],
+    setup_summary: dict[str, object],
     out_path: str,
 ) -> None:
     ja = cfg.lang == "ja"
@@ -737,6 +896,61 @@ def write_markdown_summary(
                 else "- 複数TCPストリームに跨るSMBセッションは検出されませんでした\n"
             )
         f.write("\n")
+
+        f.write(
+            f"## {'Connection Setup Analysis' if not ja else '接続確立フェーズ分析'}\n\n"
+        )
+        f.write(
+            (
+                f"- Session setup responses: `{int(setup_summary['session_setup_rsp_count'])}`\n"
+                if not ja
+                else f"- Session Setup 応答数: `{int(setup_summary['session_setup_rsp_count'])}`\n"
+            )
+        )
+        f.write(
+            (
+                f"- Session setup avg/p95: `{setup_summary['session_setup_avg_ms']:.3f}` / `{setup_summary['session_setup_p95_ms']:.3f}` ms\n"
+                if not ja
+                else f"- Session Setup 平均/P95: `{setup_summary['session_setup_avg_ms']:.3f}` / `{setup_summary['session_setup_p95_ms']:.3f}` ms\n"
+            )
+        )
+        f.write(
+            (
+                f"- Setup window avg/p95 (negotiate req -> first tree/session setup rsp): `{setup_summary['setup_window_avg_ms']:.3f}` / `{setup_summary['setup_window_p95_ms']:.3f}` ms\n"
+                if not ja
+                else f"- 確立ウィンドウ平均/P95（negotiate req -> 最初の tree/session setup rsp）: `{setup_summary['setup_window_avg_ms']:.3f}` / `{setup_summary['setup_window_p95_ms']:.3f}` ms\n"
+            )
+        )
+        setup_source = "session-id correlation"
+        if setup_summary.get("setup_window_source") == "stream_fallback":
+            setup_source = "tcp.stream fallback"
+        if ja:
+            setup_source = (
+                "セッションID相関"
+                if setup_summary.get("setup_window_source") != "stream_fallback"
+                else "tcp.streamフォールバック"
+            )
+        f.write(
+            (
+                f"- Setup window samples/source: `{int(setup_summary.get('setup_window_count', 0))}` / `{setup_source}`\n"
+                if not ja
+                else f"- 確立ウィンドウサンプル/算出元: `{int(setup_summary.get('setup_window_count', 0))}` / `{setup_source}`\n"
+            )
+        )
+        f.write(
+            (
+                f"- Session setup success/non-success: `{int(setup_summary['session_setup_success'])}` / `{int(setup_summary['session_setup_non_success'])}`\n"
+                if not ja
+                else f"- Session Setup 成功/非成功: `{int(setup_summary['session_setup_success'])}` / `{int(setup_summary['session_setup_non_success'])}`\n"
+            )
+        )
+        f.write(
+            (
+                f"- Auth-failure-like statuses in setup: `{int(setup_summary['auth_failure_like'])}`\n\n"
+                if not ja
+                else f"- 認証失敗系ステータス（setup内）: `{int(setup_summary['auth_failure_like'])}`\n\n"
+            )
+        )
 
         f.write(f"## {'SMB Properties' if not ja else 'SMBプロパティ'}\n\n")
         f.write(f"- {'SMB1 packets' if not ja else 'SMB1パケット数'}: `{smb_props['smb1_packets']}`\n")
@@ -959,6 +1173,7 @@ def main() -> int:
     stream_window_full: Counter = Counter()
 
     rows_sorted = sorted(rows, key=lambda x: to_float(x.get("frame.time_epoch", "0")))
+    setup_rows, setup_summary = analyze_connection_setup(rows_sorted)
 
     for r in rows_sorted:
         if r.get("tcp.analysis.retransmission"):
@@ -1153,6 +1368,24 @@ def main() -> int:
         io_rows,
         ["size_bucket", "count", "avg_ms", "p50_ms", "p95_ms", "max_ms"],
     )
+    write_csv(
+        os.path.join(cfg.outdir, "connection_setup_summary.csv"),
+        setup_rows,
+        [
+            "smb_session_id",
+            "setup_window_ms",
+            "negotiate_rsp_count",
+            "negotiate_p95_ms",
+            "session_setup_rsp_count",
+            "session_setup_p95_ms",
+            "session_setup_success",
+            "session_setup_non_success",
+            "session_setup_more_processing",
+            "auth_failure_like",
+            "tree_connect_rsp_count",
+            "tree_connect_p95_ms",
+        ],
+    )
 
     st_rows = [{"nt_status": k, "count": v} for k, v in status_counts.most_common()]
     write_csv(os.path.join(cfg.outdir, "ntstatus_counts.csv"), st_rows, ["nt_status", "count"])
@@ -1321,6 +1554,7 @@ def main() -> int:
         rtt_overall=rtt_overall,
         rtt_by_direction=rtt_by_direction,
         multichannel_sessions=multichannel_sessions,
+        setup_summary=setup_summary,
         out_path=os.path.join(cfg.outdir, "summary.md"),
     )
 
@@ -1404,6 +1638,7 @@ def main() -> int:
     print(f"- {os.path.join(cfg.outdir, 'io_size_latency.csv')}")
     print(f"- {os.path.join(cfg.outdir, 'rtt_summary.csv')}")
     print(f"- {os.path.join(cfg.outdir, 'rtt_by_stream.csv')}")
+    print(f"- {os.path.join(cfg.outdir, 'connection_setup_summary.csv')}")
     print(f"- {os.path.join(cfg.outdir, 'smb_session_summary.csv')}")
     print(f"- {os.path.join(cfg.outdir, 'smb_channel_summary.csv')}")
     print(f"- {os.path.join(cfg.outdir, 'tshark_iostat.txt')}")
