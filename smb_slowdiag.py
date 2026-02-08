@@ -57,6 +57,7 @@ SMB2_CMD_NAMES = {
     "17": "SET_INFO",
     "18": "OPLOCK_BREAK",
 }
+SMB2_CMD_BY_NAME = {v.upper(): k for k, v in SMB2_CMD_NAMES.items()}
 
 
 SMB_DIALECT_NAMES = {
@@ -324,7 +325,41 @@ def to_int(v: str, default: int = 0) -> int:
 
 def to_bool(v: str) -> bool:
     s = (v or "").strip().lower()
-    return s in {"1", "true", "yes"}
+    if not s:
+        return False
+    tokens = [t.strip() for t in s.split(",") if t.strip()]
+    if not tokens:
+        tokens = [s]
+    for t in tokens:
+        if t in {"1", "true", "yes"}:
+            return True
+        try:
+            if int(t, 0) != 0:
+                return True
+        except ValueError:
+            pass
+    return False
+
+
+def normalize_smb2_cmd(v: str) -> str:
+    s = (v or "").strip()
+    if not s:
+        return ""
+    token = s.split(",")[0].strip()
+    if not token:
+        return ""
+    try:
+        return str(int(token, 0))
+    except ValueError:
+        pass
+    m = re.search(r"0x([0-9a-fA-F]+)", token)
+    if m:
+        return str(int(m.group(1), 16))
+    upper = re.sub(r"[^A-Z0-9_]", "_", token.upper())
+    upper = re.sub(r"_+", "_", upper).strip("_")
+    if upper in SMB2_CMD_BY_NAME:
+        return SMB2_CMD_BY_NAME[upper]
+    return ""
 
 
 def yes_no(v: bool, lang: str = "en") -> str:
@@ -529,7 +564,7 @@ def analyze_connection_setup(
         stream = r.get("tcp.stream", "")
         if not sesid:
             # keep collecting stream-level setup timing for fallback
-            cmd = r.get("smb2.cmd", "")
+            cmd = normalize_smb2_cmd(r.get("smb2.cmd", ""))
             is_response = to_bool(r.get("smb2.flags.response", "0"))
             ts = to_float(r.get("frame.time_epoch", "0"))
             if stream:
@@ -539,7 +574,7 @@ def analyze_connection_setup(
                 if cmd in {"1", "3"} and is_response and st["first_setup_rsp_ts"] is None:
                     st["first_setup_rsp_ts"] = ts
             continue
-        cmd = r.get("smb2.cmd", "")
+        cmd = normalize_smb2_cmd(r.get("smb2.cmd", ""))
         is_response = to_bool(r.get("smb2.flags.response", "0"))
         ts = to_float(r.get("frame.time_epoch", "0"))
         t_ms = to_float(r.get("smb2.time", "0")) * 1000.0
@@ -1292,7 +1327,7 @@ def main() -> int:
 
         if msg_id and stream:
             key = (stream, msg_id)
-            cmd = r.get("smb2.cmd", "")
+            cmd = normalize_smb2_cmd(r.get("smb2.cmd", ""))
             if not is_response and cmd in {"8", "9"}:
                 req_io_size[key] = to_int(
                     r.get("smb2.read_length", "")
@@ -1313,7 +1348,7 @@ def main() -> int:
         if t_s > 0:
             ms = t_s * 1000.0
             smb_lat_all.append(ms)
-            cmd = r.get("smb2.cmd", "")
+            cmd = normalize_smb2_cmd(r.get("smb2.cmd", ""))
             if sesid:
                 session_smb_times_ms[sesid].append(ms)
                 if stream:
