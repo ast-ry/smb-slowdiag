@@ -1,17 +1,17 @@
 # smb-slowdiag
 
-`tshark` ベースで SMB 通信の遅延トラブルシューティングを行うスクリプトです。
+Troubleshooting script for SMB latency issues based on `tshark`.
 
-English README: `README.en.md`
+Japanese README: `README.md`
 
 ## Features
 
 - metadata/decrypt mode
-- SMB/TCP の遅延・異常シグナル分析
-- RTT 集計（全体/方向別/stream別）
-- SMB セッション/チャネル集計（`smb2.sesid` + `tcp.stream`）
-- 推奨アクション（判定基準・閾値判定付き）
-- レポート言語切替（`--lang ja|en`）
+- SMB/TCP latency and anomaly signal analysis
+- RTT aggregation (overall / by direction / by stream)
+- SMB session/channel aggregation (`smb2.sesid` + `tcp.stream`)
+- Recommended next actions with explicit criteria and threshold status
+- Report language switch (`--lang ja|en`)
 
 ## Requirements
 
@@ -39,7 +39,7 @@ python3 smb_slowdiag.py -r encrypted.pcap \
 
 `session_id,session_key,server2client,client2server`
 
-- `session_id`: 16桁hex（8 bytes）
+- `session_id`: 16-digit hex (8 bytes)
 - `session_key`: hex
 
 ## Output Files
