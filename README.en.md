@@ -6,7 +6,7 @@ Japanese README: `README.ja.md`
 
 ## Features
 
-- metadata/decrypt mode
+- no-key/key-assisted-decrypt mode
 - SMB/TCP latency and anomaly signal analysis
 - RTT aggregation (overall / by direction / by stream)
 - SMB session/channel aggregation (`smb2.sesid` + `tcp.stream`)
@@ -43,14 +43,14 @@ python3 smb_slowdiag.py -r encrypted.pcap \
 - `--server-ip <ip>`: SMB server IP
 - `--interval <sec>`: Timeline bucket size in seconds (default: `1`, minimum `1`)
 - `--tshark <path>`: `tshark` executable path (default: `tshark`)
-- `--smb-key-file <csv>`: SMB decryption key CSV (`decrypt mode` when provided)
+- `--smb-key-file <csv>`: SMB decryption key CSV (`key-assisted-decrypt mode` when provided)
 - `--max-slow-ops <n>`: Max rows in `top_slow_ops.csv` (default: `30`)
 - `--lang {ja,en}`: `summary.md` language (default: `ja`)
 - `-h, --help`: Show help
 
 Notes:
 - Client/server IP filtering is applied **only when both** `--client-ip` and `--server-ip` are provided.
-- Without `--smb-key-file`, analysis runs in `metadata mode`.
+- Without `--smb-key-file`, analysis runs in `no-key mode`.
 
 ## Key File Format
 

@@ -3,8 +3,8 @@
 SMB slow access diagnostics from pcap using tshark.
 
 Modes:
-- metadata mode: no SMB decryption key available
-- decrypt mode: SMB session keys provided and tshark attempts decryption
+- no-key mode: SMB decryption keys are not provided
+- key-assisted decrypt mode: SMB session keys are provided and tshark attempts decryption
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ TROUBLESHOOT_REFS = {
 
 def parse_args() -> Config:
     parser = argparse.ArgumentParser(
-        description="Diagnose slow SMB traffic using tshark (metadata/decrypt mode)."
+        description="Diagnose slow SMB traffic using tshark (no-key/key-assisted-decrypt mode)."
     )
     parser.add_argument("-r", "--pcap", required=True, help="Input pcap/pcapng file")
     parser.add_argument("-o", "--outdir", default="smb_diag_out", help="Output directory")
@@ -685,13 +685,13 @@ def analyze_connection_setup(
 def detect_mode(cfg: Config) -> tuple[str, list[str], list[tuple[str, str, str, str]]]:
     extra_opts: list[str] = []
     keys: list[tuple[str, str, str, str]] = []
-    mode = "metadata"
+    mode = "no-key"
     if cfg.smb_key_file:
         if not os.path.isfile(cfg.smb_key_file):
             raise FileNotFoundError(f"smb key file not found: {cfg.smb_key_file}")
         keys = read_key_file(cfg.smb_key_file)
         if keys:
-            mode = "decrypt"
+            mode = "key-assisted-decrypt"
             uat = make_uat_smb2_seskey_list(keys)
             extra_opts = ["-o", f"uat:smb2_seskey_list:{uat}"]
     return mode, extra_opts, keys
@@ -1058,9 +1058,9 @@ def write_markdown_summary(
                 )
         else:
             f.write(
-                "- Not available (likely metadata-only capture or decryption unavailable)\n"
+                "- Not available (likely no-key mode visibility limits or decryption unavailable)\n"
                 if not ja
-                else "- 利用不可（メタデータのみ、または復号不可の可能性）\n"
+                else "- 利用不可（no-keyモードの可視性制約、または復号不可の可能性）\n"
             )
         f.write("\n")
 

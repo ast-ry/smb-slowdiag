@@ -6,7 +6,7 @@ English README: `README.md`
 
 ## Features
 
-- metadata/decrypt mode
+- no-key/key-assisted-decrypt mode
 - SMB/TCP の遅延・異常シグナル分析
 - RTT 集計（全体/方向別/stream別）
 - SMB セッション/チャネル集計（`smb2.sesid` + `tcp.stream`）
@@ -43,14 +43,14 @@ python3 smb_slowdiag.py -r encrypted.pcap \
 - `--server-ip <ip>`: SMBサーバーIP
 - `--interval <sec>`: 時系列バケット秒数（デフォルト: `1`、最小 `1`）
 - `--tshark <path>`: `tshark` 実行ファイルパス（デフォルト: `tshark`）
-- `--smb-key-file <csv>`: 復号キーCSV（指定時 `decrypt mode`）
+- `--smb-key-file <csv>`: 復号キーCSV（指定時 `key-assisted-decrypt mode`）
 - `--max-slow-ops <n>`: `top_slow_ops.csv` の最大行数（デフォルト: `30`）
 - `--lang {ja,en}`: `summary.md` の言語（デフォルト: `ja`）
 - `-h, --help`: ヘルプ表示
 
 補足:
 - フィルタに `client/server` IP を適用するのは **両方指定した場合のみ** です。
-- `--smb-key-file` 未指定時は `metadata mode` で解析します。
+- `--smb-key-file` 未指定時は `no-key mode` で解析します。
 
 ## Key File Format
 
