@@ -72,6 +72,8 @@ Notes:
 - `io_size_latency.csv`: Latency by I/O size bucket
 - `rtt_summary.csv`: RTT summary (overall / by direction)
 - `rtt_by_stream.csv`: RTT stats by `tcp.stream`
+- `stream_diagnosis.csv`: Per-`tcp.stream` diagnostics (score, triggered action IDs, SMB/RTT/TCP anomaly stats)
+- `connection_setup_summary.csv`: Connection setup phase stats (`NEGOTIATE/SESSION_SETUP/TREE_CONNECT`)
 - `smb_session_summary.csv`: Aggregation by `smb2.sesid` (stream count, latency, non-success status)
 - `smb_channel_summary.csv`: Aggregation by `smb2.sesid + tcp.stream` (latency + TCP anomalies)
 - `tshark_iostat.txt`: Raw output of `tshark -z io,stat`

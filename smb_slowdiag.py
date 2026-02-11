@@ -779,6 +779,7 @@ def write_markdown_summary(
     rtt_by_direction: dict[str, dict[str, float]],
     multichannel_sessions: list[dict[str, object]],
     setup_summary: dict[str, object],
+    stream_diagnosis_rows: list[dict[str, object]],
     out_path: str,
 ) -> None:
     ja = cfg.lang == "ja"
@@ -946,6 +947,31 @@ def write_markdown_summary(
                 "- No SMB sessions spanning multiple TCP streams were detected\n"
                 if not ja
                 else "- 複数TCPストリームに跨るSMBセッションは検出されませんでした\n"
+            )
+        f.write("\n")
+
+        f.write(f"## {'Per-Stream Diagnostics (Top)' if not ja else 'TCPストリーム別診断（上位）'}\n\n")
+        if stream_diagnosis_rows:
+            for s in stream_diagnosis_rows[:10]:
+                if not ja:
+                    f.write(
+                        f"- stream `{s['tcp_stream']}`: score={s['diagnostic_score']}, primary={s['primary_issue']}, "
+                        f"triggers={s['triggered_actions'] or 'none'}, smb_p95={s['smb_p95_ms']} ms, "
+                        f"rtt_p95={s['rtt_p95_ms']} ms, retrans={s['retransmissions']}, dup_ack={s['dup_acks']}, "
+                        f"zero_window={s['zero_window']}, window_full={s['window_full']}, smb_packets={s['smb_packets']}\n"
+                    )
+                else:
+                    f.write(
+                        f"- stream `{s['tcp_stream']}`: スコア={s['diagnostic_score']}, 主要論点={s['primary_issue']}, "
+                        f"トリガー={s['triggered_actions'] or 'なし'}, smb_p95={s['smb_p95_ms']} ms, "
+                        f"rtt_p95={s['rtt_p95_ms']} ms, retrans={s['retransmissions']}, dup_ack={s['dup_acks']}, "
+                        f"zero_window={s['zero_window']}, window_full={s['window_full']}, smb_packets={s['smb_packets']}\n"
+                    )
+        else:
+            f.write(
+                "- No TCP stream-level SMB diagnostics available\n"
+                if not ja
+                else "- TCPストリーム単位のSMB診断データはありません\n"
             )
         f.write("\n")
 
@@ -1223,27 +1249,37 @@ def main() -> int:
     stream_dup_ack: Counter = Counter()
     stream_zero_window: Counter = Counter()
     stream_window_full: Counter = Counter()
+    stream_frame_count: Counter = Counter()
+    stream_smb_packets: Counter = Counter()
+    stream_smb_req: Counter = Counter()
+    stream_smb_rsp: Counter = Counter()
+    stream_status: dict[str, Counter] = defaultdict(Counter)
+    stream_credit_pressure: Counter = Counter()
+    stream_smb_lat_ms: dict[str, list[float]] = defaultdict(list)
 
     rows_sorted = sorted(rows, key=lambda x: to_float(x.get("frame.time_epoch", "0")))
     setup_rows, setup_summary = analyze_connection_setup(rows_sorted)
 
     for r in rows_sorted:
+        stream_key = r.get("tcp.stream", "")
+        if stream_key:
+            stream_frame_count[stream_key] += 1
         if r.get("tcp.analysis.retransmission"):
             retrans += 1
-            if r.get("tcp.stream", ""):
-                stream_retrans[r.get("tcp.stream", "")] += 1
+            if stream_key:
+                stream_retrans[stream_key] += 1
         if r.get("tcp.analysis.duplicate_ack"):
             dup_ack += 1
-            if r.get("tcp.stream", ""):
-                stream_dup_ack[r.get("tcp.stream", "")] += 1
+            if stream_key:
+                stream_dup_ack[stream_key] += 1
         if r.get("tcp.analysis.zero_window"):
             zero_window += 1
-            if r.get("tcp.stream", ""):
-                stream_zero_window[r.get("tcp.stream", "")] += 1
+            if stream_key:
+                stream_zero_window[stream_key] += 1
         if r.get("tcp.analysis.window_full"):
             window_full += 1
-            if r.get("tcp.stream", ""):
-                stream_window_full[r.get("tcp.stream", "")] += 1
+            if stream_key:
+                stream_window_full[stream_key] += 1
         ack_rtt_s = to_float(r.get("tcp.analysis.ack_rtt", "0"))
         if ack_rtt_s > 0:
             rtt_ms = ack_rtt_s * 1000.0
@@ -1260,7 +1296,6 @@ def main() -> int:
             else:
                 dir_key = f"{src}->{dst}" if src and dst else "unknown"
             rtt_dir_ms[dir_key].append(rtt_ms)
-            stream_key = r.get("tcp.stream", "")
             if stream_key:
                 rtt_stream_ms[stream_key].append(rtt_ms)
         if r.get("smb.cmd", ""):
@@ -1283,16 +1318,20 @@ def main() -> int:
         nt = r.get("smb2.nt_status", "")
         if nt:
             status_counts[nt] += 1
+            if stream_key and nt != "0x00000000":
+                stream_status[stream_key][nt] += 1
 
         req = to_int(r.get("smb2.credits.requested", "0"))
         grant = to_int(r.get("smb2.credits.granted", "0"))
         if req > 0 and grant > 0 and req > grant:
             credit_pressure_count += 1
+            if stream_key:
+                stream_credit_pressure[stream_key] += 1
         if r.get("smb2.header.transform.flags.encrypted"):
             encrypted_payload_frames += 1
 
         msg_id = r.get("smb2.msg_id", "")
-        stream = r.get("tcp.stream", "")
+        stream = stream_key
         sesid = r.get("smb2.sesid", "")
         is_response = to_bool(r.get("smb2.flags.response", "0"))
         src = r.get("ip.src", "")
@@ -1354,6 +1393,13 @@ def main() -> int:
                 if stream:
                     stream_smb_times_ms[(sesid, stream)].append(ms)
             if cmd:
+                if stream:
+                    stream_smb_packets[stream] += 1
+                    if is_response:
+                        stream_smb_rsp[stream] += 1
+                    else:
+                        stream_smb_req[stream] += 1
+                    stream_smb_lat_ms[stream].append(ms)
                 io_size = 0
                 if cmd in {"8", "9"} and stream and msg_id:
                     io_size = req_io_size.get((stream, msg_id), 0)
@@ -1586,6 +1632,141 @@ def main() -> int:
             )
     multichannel_sessions.sort(key=lambda x: (x["stream_count"], x["smb_p95_ms"]), reverse=True)
 
+    stream_diag_rows = []
+    all_stream_ids = set(stream_frame_count.keys())
+    all_stream_ids.update(stream_smb_packets.keys())
+    all_stream_ids.update(rtt_stream_ms.keys())
+    all_stream_ids.update(stream_retrans.keys())
+    all_stream_ids.update(stream_dup_ack.keys())
+    all_stream_ids.update(stream_zero_window.keys())
+    all_stream_ids.update(stream_window_full.keys())
+    all_stream_ids.update(stream_status.keys())
+    all_stream_ids.update(stream_credit_pressure.keys())
+    for sid in sorted(all_stream_ids, key=lambda x: int(x) if x.isdigit() else x):
+        frame_cnt = int(stream_frame_count.get(sid, 0))
+        smb_stats = summarize_latency(stream_smb_lat_ms.get(sid, []))
+        rtt_stats = summarize_latency(rtt_stream_ms.get(sid, []))
+        retrans_c = int(stream_retrans.get(sid, 0))
+        dup_c = int(stream_dup_ack.get(sid, 0))
+        zero_c = int(stream_zero_window.get(sid, 0))
+        winfull_c = int(stream_window_full.get(sid, 0))
+        credit_c = int(stream_credit_pressure.get(sid, 0))
+        st_counter = stream_status.get(sid, Counter())
+        st_total = int(sum(st_counter.values()))
+        auth_acl_hits = int(
+            st_counter.get("0xc000006d", 0)
+            + st_counter.get("0xc0000022", 0)
+            + st_counter.get("0xc0000034", 0)
+        )
+        auth_acl_pct = (auth_acl_hits / max(1, st_total)) * 100.0
+        retrans_pct = (retrans_c / max(1, frame_cnt)) * 100.0
+        dup_pct = (dup_c / max(1, frame_cnt)) * 100.0
+        zero_pct = (zero_c / max(1, frame_cnt)) * 100.0
+        winfull_pct = (winfull_c / max(1, frame_cnt)) * 100.0
+
+        t1 = retrans_c >= 3 or retrans_pct >= 0.10 or dup_c >= 10 or dup_pct >= 0.20
+        t2 = zero_c >= 3 or zero_pct >= 0.05 or winfull_c >= 10 or winfull_pct >= 0.20
+        t3 = (
+            smb_stats["p95_ms"] >= 100.0
+            and retrans_c < 3
+            and (rtt_stats["count"] == 0 or rtt_stats["p95_ms"] <= 20.0)
+        )
+        t4 = auth_acl_hits >= 3 or auth_acl_pct >= 5.0
+        t5 = credit_c >= 5
+        triggered = []
+        if t1:
+            triggered.append("1")
+        if t2:
+            triggered.append("2")
+        if t3:
+            triggered.append("3")
+        if t4:
+            triggered.append("4")
+        if t5:
+            triggered.append("5")
+        primary = "none"
+        if t1:
+            primary = "network_quality"
+        elif t2:
+            primary = "receiver_backpressure"
+        elif t3:
+            primary = "server_storage_delay"
+        elif t4:
+            primary = "auth_acl_errors"
+        elif t5:
+            primary = "credit_bottleneck"
+        score = len(triggered) * 100
+        score += retrans_c * 5 + dup_c * 2 + zero_c * 3 + winfull_c * 2
+        score += int(smb_stats["p95_ms"] / 10.0) + int(rtt_stats["p95_ms"] / 10.0)
+        stream_diag_rows.append(
+            {
+                "tcp_stream": sid,
+                "diagnostic_score": score,
+                "primary_issue": primary,
+                "triggered_actions": ",".join(triggered),
+                "stream_frames": frame_cnt,
+                "smb_packets": int(stream_smb_packets.get(sid, 0)),
+                "smb_req": int(stream_smb_req.get(sid, 0)),
+                "smb_rsp": int(stream_smb_rsp.get(sid, 0)),
+                "smb_time_count": int(smb_stats["count"]),
+                "smb_avg_ms": f"{smb_stats['avg_ms']:.3f}",
+                "smb_p50_ms": f"{smb_stats['p50_ms']:.3f}",
+                "smb_p95_ms": f"{smb_stats['p95_ms']:.3f}",
+                "smb_max_ms": f"{smb_stats['max_ms']:.3f}",
+                "rtt_count": int(rtt_stats["count"]),
+                "rtt_avg_ms": f"{rtt_stats['avg_ms']:.3f}",
+                "rtt_p50_ms": f"{rtt_stats['p50_ms']:.3f}",
+                "rtt_p95_ms": f"{rtt_stats['p95_ms']:.3f}",
+                "rtt_max_ms": f"{rtt_stats['max_ms']:.3f}",
+                "retransmissions": retrans_c,
+                "dup_acks": dup_c,
+                "zero_window": zero_c,
+                "window_full": winfull_c,
+                "credit_pressure_events": credit_c,
+                "auth_acl_related": auth_acl_hits,
+                "auth_acl_related_pct": f"{auth_acl_pct:.2f}",
+            }
+        )
+    stream_diag_rows.sort(
+        key=lambda r: (
+            int(r["diagnostic_score"]),
+            int(r["smb_packets"]),
+            float(str(r["smb_p95_ms"])),
+        ),
+        reverse=True,
+    )
+    write_csv(
+        os.path.join(cfg.outdir, "stream_diagnosis.csv"),
+        stream_diag_rows,
+        [
+            "tcp_stream",
+            "diagnostic_score",
+            "primary_issue",
+            "triggered_actions",
+            "stream_frames",
+            "smb_packets",
+            "smb_req",
+            "smb_rsp",
+            "smb_time_count",
+            "smb_avg_ms",
+            "smb_p50_ms",
+            "smb_p95_ms",
+            "smb_max_ms",
+            "rtt_count",
+            "rtt_avg_ms",
+            "rtt_p50_ms",
+            "rtt_p95_ms",
+            "rtt_max_ms",
+            "retransmissions",
+            "dup_acks",
+            "zero_window",
+            "window_full",
+            "credit_pressure_events",
+            "auth_acl_related",
+            "auth_acl_related_pct",
+        ],
+    )
+
     write_markdown_summary(
         cfg=cfg,
         mode=mode,
@@ -1607,6 +1788,7 @@ def main() -> int:
         rtt_by_direction=rtt_by_direction,
         multichannel_sessions=multichannel_sessions,
         setup_summary=setup_summary,
+        stream_diagnosis_rows=stream_diag_rows,
         out_path=os.path.join(cfg.outdir, "summary.md"),
     )
 
@@ -1690,6 +1872,7 @@ def main() -> int:
     print(f"- {os.path.join(cfg.outdir, 'io_size_latency.csv')}")
     print(f"- {os.path.join(cfg.outdir, 'rtt_summary.csv')}")
     print(f"- {os.path.join(cfg.outdir, 'rtt_by_stream.csv')}")
+    print(f"- {os.path.join(cfg.outdir, 'stream_diagnosis.csv')}")
     print(f"- {os.path.join(cfg.outdir, 'connection_setup_summary.csv')}")
     print(f"- {os.path.join(cfg.outdir, 'smb_session_summary.csv')}")
     print(f"- {os.path.join(cfg.outdir, 'smb_channel_summary.csv')}")

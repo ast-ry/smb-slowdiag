@@ -72,6 +72,8 @@ python3 smb_slowdiag.py -r encrypted.pcap \
 - `io_size_latency.csv`: I/Oサイズバケット別遅延
 - `rtt_summary.csv`: RTT要約（全体/方向別）
 - `rtt_by_stream.csv`: `tcp.stream` 別RTT統計
+- `stream_diagnosis.csv`: `tcp.stream` 別診断（スコア、トリガーしたアクションID、SMB/RTT/TCP異常統計）
+- `connection_setup_summary.csv`: 接続確立フェーズ統計（`NEGOTIATE/SESSION_SETUP/TREE_CONNECT`）
 - `smb_session_summary.csv`: `smb2.sesid` 別集計（stream数、遅延、非成功ステータスなど）
 - `smb_channel_summary.csv`: `smb2.sesid + tcp.stream` 別集計（遅延 + TCP異常）
 - `tshark_iostat.txt`: `tshark -z io,stat` 生出力
