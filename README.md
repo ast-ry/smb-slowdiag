@@ -63,7 +63,7 @@ Notes:
 
 ## Output Files
 
-- `summary.md`: Consolidated report (findings, recommended actions, SMB/RTT/multichannel summary)
+- `summary.md`: Consolidated report (findings, recommended actions with threshold source/confidence/evidence, SMB/RTT/multichannel summary)
 - `timeline.csv`: Time-bucketed counters
   - Main columns: `bucket_start,frames,bytes,retransmissions,dup_acks,zero_window,window_full,smb_req,smb_rsp,avg_smb_time_ms`
 - `top_slow_ops.csv`: Top slow SMB operations

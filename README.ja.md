@@ -63,7 +63,7 @@ python3 smb_slowdiag.py -r encrypted.pcap \
 
 ## Output Files
 
-- `summary.md`: 総合レポート（所見、推奨アクション、SMB/RTT/マルチチャネル要約）
+- `summary.md`: 総合レポート（所見、推奨アクション: 閾値根拠種別/信頼度/根拠URL付き、SMB/RTT/マルチチャネル要約）
 - `timeline.csv`: 時系列バケット集計
   - 主列: `bucket_start,frames,bytes,retransmissions,dup_acks,zero_window,window_full,smb_req,smb_rsp,avg_smb_time_ms`
 - `top_slow_ops.csv`: 遅いSMBオペ上位

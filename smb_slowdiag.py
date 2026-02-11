@@ -416,6 +416,9 @@ def build_recommended_actions(
                 "MTU不一致と経路品質を iperf/ping で確認。"
             ),
             "refs": f"{TROUBLESHOOT_REFS['ms_slow_smb_transfer']} | {TROUBLESHOOT_REFS['wireshark_tcp_dfref']}",
+            "source_type": "case-calibrated",
+            "confidence": "medium",
+            "evidence": f"{TROUBLESHOOT_REFS['ms_slow_smb_transfer']} | {TROUBLESHOOT_REFS['wireshark_tcp_dfref']}",
         }
     )
 
@@ -444,6 +447,9 @@ def build_recommended_actions(
                 "アプリ側スループット制約と単一フロー過負荷を確認。"
             ),
             "refs": f"{TROUBLESHOOT_REFS['ms_slow_smb_transfer']} | {TROUBLESHOOT_REFS['wireshark_tcp_dfref']}",
+            "source_type": "case-calibrated",
+            "confidence": "medium",
+            "evidence": f"{TROUBLESHOOT_REFS['ms_slow_smb_transfer']} | {TROUBLESHOOT_REFS['wireshark_tcp_dfref']}",
         }
     )
 
@@ -474,6 +480,9 @@ def build_recommended_actions(
                 "イベントログとストレージキュー深度を確認。"
             ),
             "refs": TROUBLESHOOT_REFS["ms_smb_troubleshoot"],
+            "source_type": "case-calibrated",
+            "confidence": "medium",
+            "evidence": TROUBLESHOOT_REFS["ms_smb_troubleshoot"],
         }
     )
 
@@ -507,6 +516,9 @@ def build_recommended_actions(
                 "同時刻のサーバーセキュリティログを突合。"
             ),
             "refs": f"{TROUBLESHOOT_REFS['ms_smb_troubleshoot']} | {TROUBLESHOOT_REFS['ms_erref']}",
+            "source_type": "official+case-calibrated",
+            "confidence": "high",
+            "evidence": f"{TROUBLESHOOT_REFS['ms_smb_troubleshoot']} | {TROUBLESHOOT_REFS['ms_erref']}",
         }
     )
 
@@ -533,6 +545,9 @@ def build_recommended_actions(
                 "outstandingが低く大容量転送が直列化していないか確認。"
             ),
             "refs": f"{TROUBLESHOOT_REFS['ms_smb2_credit']} | {TROUBLESHOOT_REFS['ms_smb_troubleshoot']}",
+            "source_type": "official+case-calibrated",
+            "confidence": "medium",
+            "evidence": f"{TROUBLESHOOT_REFS['ms_smb2_credit']} | {TROUBLESHOOT_REFS['ms_smb_troubleshoot']}",
         }
     )
     return actions
@@ -1066,7 +1081,16 @@ def write_markdown_summary(
             f.write(f"{'Trigger' if not ja else 'トリガー'}: {a['trigger']}\n")
             f.write(f"{'Criteria' if not ja else '判定基準'}: {a['criteria']}\n")
             f.write(f"{'Threshold' if not ja else '閾値判定'}: {a['threshold']}\n")
+            f.write(
+                f"{'Threshold Source' if not ja else '閾値の根拠種別'}: {a.get('source_type', 'unknown')}\n"
+            )
+            f.write(
+                f"{'Confidence' if not ja else '信頼度'}: {a.get('confidence', 'unknown')}\n"
+            )
             f.write(f"{'Next' if not ja else '次アクション'}: {a['next']}\n")
+            f.write(
+                f"{'Evidence' if not ja else '根拠URL'}: {a.get('evidence', a['refs'])}\n"
+            )
             f.write(f"{'Refs' if not ja else '参照'}: {a['refs']}\n\n")
 
         f.write(
