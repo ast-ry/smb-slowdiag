@@ -368,6 +368,16 @@ def yes_no(v: bool, lang: str = "en") -> str:
     return "Yes" if v else "No"
 
 
+def format_links(value: str) -> str:
+    urls = [u.strip() for u in str(value or "").split("|") if u.strip()]
+    if not urls:
+        return ""
+    parts = []
+    for i, u in enumerate(urls, start=1):
+        parts.append(f"[link{i}]({u}) <{u}>")
+    return " | ".join(parts)
+
+
 def build_recommended_actions(
     lang: str,
     total_frames: int,
@@ -1089,9 +1099,9 @@ def write_markdown_summary(
             )
             f.write(f"{'Next' if not ja else '次アクション'}: {a['next']}\n")
             f.write(
-                f"{'Evidence' if not ja else '根拠URL'}: {a.get('evidence', a['refs'])}\n"
+                f"{'Evidence' if not ja else '根拠URL'}: {format_links(a.get('evidence', a['refs']))}\n"
             )
-            f.write(f"{'Refs' if not ja else '参照'}: {a['refs']}\n\n")
+            f.write(f"{'Refs' if not ja else '参照'}: {format_links(a['refs'])}\n\n")
 
         f.write(
             f"## {'Top Slow Commands (by P95)' if not ja else '遅いコマンド上位 (P95順)'}\n\n"
